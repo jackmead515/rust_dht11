@@ -4,9 +4,6 @@ use std::fmt;
 
 use crate::gpio::GPIOPin;
 
-const DHT_MAXCOUNT: usize = 32_000;
-const DHT_PULSES: usize = 41;
-
 #[derive(Debug)]
 pub enum SensorError {
   FailedRead(String),
@@ -54,39 +51,32 @@ impl DHT11 {
     return Err(SensorError::FailedRead("dht11 failed".to_string()));
   }
 
-  fn read_sensor(&mut self) -> Result<(f32, f32), SensorError> {
-    let mut pulse_counts: [u32; DHT_PULSES*2] = [0; DHT_PULSES*2];
-  
-    // Signal to sensor that a reading is desired
+  pub fn read_sensor(&mut self) -> Result<(f32, f32), SensorError> {
     self.pin.set_output();
     self.pin.set_high();
     thread::sleep(Duration::from_millis(500));
     self.pin.set_low();
     thread::sleep(Duration::from_millis(20));
+    self.pin.set_high();
+    thread::sleep(Duration::from_micros(30));
     self.pin.set_input();
-    thread::sleep(Duration::from_micros(5));
-  
-    // Wait for pin to set itself to low
-    let mut count = 0;
-    while self.pin.is_high() {
-      count += 1;
-      if count >= DHT_MAXCOUNT {
-        return Err(SensorError::Timeout("dht11 failed to pull low".to_string()));
-      }
-    }
-  
+
     // Capture the pulses from the sensor.
+    const DHT_MAXCOUNT: usize = 32_000;
+    const DHT_PULSES: usize = 41;
+    let mut pulse_counts: [u32; DHT_PULSES*2] = [0; DHT_PULSES*2];
+
     for i in (0..DHT_PULSES * 2).step_by(2) {
       while self.pin.is_low() {
         pulse_counts[i] += 1;
         if pulse_counts[i] >= DHT_MAXCOUNT as u32 {
-          return Err(SensorError::Timeout("dht11 timed out on pin low pulse capture".to_string()));
+          return Err(SensorError::Timeout("timed out low pulse capture".to_string()));
         }
       }
       while self.pin.is_high() {
         pulse_counts[i + 1] += 1;
         if pulse_counts[i + 1] >= DHT_MAXCOUNT as u32 {
-          return Err(SensorError::Timeout("dht11 timed out on pin high pulse capture".to_string()));
+          return Err(SensorError::Timeout("timed out high pulse capture".to_string()));
         }
       }
     }
@@ -109,13 +99,15 @@ impl DHT11 {
     }
   
     // Ensures that collected data is valid and returns
-    if data[4] == ((data[0] + data[1] + data[2] + data[3]) & 0xFF) {
-      let humid = data[0] as f32;
-      let temp = data[2] as f32;
+    if data[4] == data[0] + data[1] + data[2] + data[3] {
+      let hint = data[0] as f32; let hdec = data[1] as f32;
+      let tint = data[2] as f32; let tdec = data[3] as f32;
+      let humid: f32 = hint + (hdec / 10.0);
+      let temp: f32 = tint + (tdec / 10.0);
   
       return Ok((temp, humid));
     } else {
-      return Err(SensorError::FailedRead("dht11 failed checksum validation".to_string()));
+      return Err(SensorError::FailedRead("failed checksum validation".to_string()));
     }
   }
 }
